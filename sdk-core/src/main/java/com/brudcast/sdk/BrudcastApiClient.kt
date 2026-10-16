@@ -15,14 +15,19 @@ import java.util.concurrent.ExecutorService
  * @property code The service's error code, when it sent one.
  * @property message What went wrong.
  */
-public data class BrudcastApiError(
-    val statusCode: Int?,
-    val code: String?,
+public class BrudcastApiError(
+    public val statusCode: Int?,
+    public val code: String?,
     override val message: String,
 ) : Exception(message) {
-    /** True for a status worth retrying: no response, 408, 429 or any 5xx. */
-    val isRetryable: Boolean
-        get() = statusCode == null || statusCode == 408 || statusCode == 429 || statusCode >= 500
+    override fun equals(other: Any?): Boolean =
+        other is BrudcastApiError && statusCode == other.statusCode && code == other.code && message == other.message
+
+    override fun hashCode(): Int = listOf(statusCode, code, message).hashCode()
+
+    /** True for a failure worth retrying: no response, 408, 429 or any 5xx. A request the client could not build never is. */
+    public val isRetryable: Boolean
+        get() = if (statusCode == null) code != "client" else statusCode == 408 || statusCode == 429 || statusCode >= 500
 
     override fun toString(): String =
         statusCode?.let { "HTTP $it${code?.let { c -> " $c" } ?: ""}: $message" } ?: message
@@ -112,6 +117,8 @@ public class BrudcastApiClient internal constructor(
             decode(status, text)
         } catch (error: IOException) {
             BrudcastResult.Failure(BrudcastApiError(null, null, error.message ?: error.javaClass.simpleName))
+        } catch (error: RuntimeException) {
+            BrudcastResult.Failure(BrudcastApiError(null, "client", error.message ?: error.javaClass.simpleName))
         } finally {
             connection?.disconnect()
         }

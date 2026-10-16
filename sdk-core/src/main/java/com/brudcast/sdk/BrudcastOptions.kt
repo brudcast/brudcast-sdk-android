@@ -47,14 +47,27 @@ public enum class BrudcastAppearance {
  * Optional traits sent with `identify`. Core uses them to fill a new contact; they never overwrite
  * values a contact already has.
  */
-public data class BrudcastTraits(
-    val email: String? = null,
-    val phone: String? = null,
-    val firstName: String? = null,
-    val lastName: String? = null,
-    val language: String? = null,
-    val timezone: String? = null,
+public class BrudcastTraits(
+    public val email: String? = null,
+    public val phone: String? = null,
+    public val firstName: String? = null,
+    public val lastName: String? = null,
+    public val language: String? = null,
+    public val timezone: String? = null,
 ) {
+    override fun equals(other: Any?): Boolean =
+        other is BrudcastTraits &&
+            email == other.email &&
+            phone == other.phone &&
+            firstName == other.firstName &&
+            lastName == other.lastName &&
+            language == other.language &&
+            timezone == other.timezone
+
+    override fun hashCode(): Int = listOf<Any?>(email, phone, firstName, lastName, language, timezone).hashCode()
+
+    override fun toString(): String = "BrudcastTraits(email=$email, phone=$phone, firstName=$firstName, lastName=$lastName, language=$language, timezone=$timezone)"
+
     internal fun toJson(): JSONObject {
         val json = JSONObject()
         listOf(
@@ -91,11 +104,24 @@ public data class BrudcastTraits(
  * @property presentationFilter Decides which activities may show in-app messages, such as to keep
  *   them off a login screen.
  */
-public data class BrudcastOptions(
-    val environment: BrudcastEnvironment = BrudcastEnvironment.Production,
-    val logLevel: BrudcastLogLevel = BrudcastLogLevel.WARNING,
-    val appearance: BrudcastAppearance = BrudcastAppearance.SYSTEM,
-    val modules: List<BrudcastModule> = emptyList(),
-    val accentColor: Int? = null,
-    val presentationFilter: ((Activity) -> Boolean)? = null,
-)
+public class BrudcastOptions(
+    public val environment: BrudcastEnvironment = BrudcastEnvironment.Production,
+    public val logLevel: BrudcastLogLevel = BrudcastLogLevel.WARNING,
+    public val appearance: BrudcastAppearance = BrudcastAppearance.SYSTEM,
+    public val modules: List<BrudcastModule> = emptyList(),
+    public val accentColor: Int? = null,
+    public val presentationFilter: ((Activity) -> Boolean)? = null,
+) {
+    override fun equals(other: Any?): Boolean =
+        other is BrudcastOptions &&
+            environment == other.environment &&
+            logLevel == other.logLevel &&
+            appearance == other.appearance &&
+            modules == other.modules &&
+            accentColor == other.accentColor &&
+            presentationFilter == other.presentationFilter
+
+    override fun hashCode(): Int = listOf<Any?>(environment, logLevel, appearance, modules, accentColor, presentationFilter).hashCode()
+
+    override fun toString(): String = "BrudcastOptions(environment=$environment, logLevel=$logLevel, appearance=$appearance, modules=$modules, accentColor=$accentColor, presentationFilter=$presentationFilter)"
+}

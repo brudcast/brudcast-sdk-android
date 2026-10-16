@@ -38,7 +38,11 @@ public object Brudcast {
                 BrudcastLogger.warning("initialize was called more than once; the first call wins")
                 return
             }
-            val application = context.applicationContext as android.app.Application
+            val application = context.applicationContext as? android.app.Application ?: context as? android.app.Application
+            if (application == null) {
+                BrudcastLogger.error("initialize needs a context whose application context is the Application")
+                return
+            }
             created = BrudcastCore(application, key, options, BrudcastStorage.standard(application))
             created.actionHandler = pendingActionHandler
             core = created

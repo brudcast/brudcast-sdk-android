@@ -68,13 +68,47 @@ class EventQueueTest {
     }
 
     @Test
-    fun rejectedBatchesAreDroppedAndUnauthorizedOnesKept() {
+    fun loneRejectedAndDiscardedEventsAreDroppedAndUnauthorizedOnesKept() {
         val queue = queue()
         queue.enqueue(event())
         queue.complete(queue.nextBatch()!!, EventQueue.Outcome.UNAUTHORIZED)
         assertEquals(1, queue.waitingCount)
         queue.complete(queue.nextBatch()!!, EventQueue.Outcome.REJECTED)
         assertEquals(0, queue.waitingCount)
+        queue.enqueue(event())
+        queue.enqueue(event())
+        queue.complete(queue.nextBatch()!!, EventQueue.Outcome.DISCARDED)
+        assertEquals(0, queue.waitingCount)
+    }
+
+    @Test
+    fun aRejectedBatchIsHalvedUntilOnlyTheBadEventIsDropped() {
+        val queue = queue()
+        repeat(8) { queue.enqueue(event()) }
+        val bad = queue.events[5].id
+        var sent = 0
+        while (true) {
+            val batch = queue.nextBatch() ?: break
+            if (batch.any { it.id == bad }) {
+                queue.complete(batch, EventQueue.Outcome.REJECTED)
+            } else {
+                sent += batch.size
+                queue.complete(batch, EventQueue.Outcome.SENT)
+            }
+        }
+        assertEquals(7, sent)
+        assertEquals(0, queue.waitingCount)
+    }
+
+    @Test
+    fun batchesNeverMixOwners() {
+        val queue = queue()
+        queue.enqueue(event().apply { owner = "a" })
+        queue.enqueue(event().apply { owner = "b" })
+        queue.enqueue(event().apply { owner = "a" })
+        val batch = queue.nextBatch()!!
+        assertEquals(2, batch.size)
+        assertTrue(batch.all { it.owner == "a" })
     }
 
     @Test
@@ -92,8 +126,11 @@ class EventQueueTest {
             type = "click", messageId = "m1", buttonId = "cta",
             properties = mapOf("plan" to BrudcastValue.Text("pro"), "seats" to BrudcastValue.Number(3.0)),
             occurredAt = clock, channel = "in_app",
-        )
-        queue(storage).enqueue(original)
+        ).apply { owner = "4812" }
+        queue(storage).apply {
+            enqueue(original)
+            persistIfNeeded()
+        }
         assertEquals(listOf(original), queue(storage).events)
     }
 
@@ -102,6 +139,14 @@ class EventQueueTest {
         val json = event(channel = "push").toApiJson()
         assertFalse(json.has("channel"))
         assertEquals("2027-01-15T08:00:00.000Z", json.getString("occurredAt"))
+    }
+
+    @Test
+    fun nonFiniteNumbersAreNeverHandedToOrgJson() {
+        val json = BrudcastValue.propertiesToJson(mapOf("nan" to BrudcastValue.Number(Double.NaN), "inf" to BrudcastValue.Number(Double.POSITIVE_INFINITY)))
+        assertTrue(json.isNull("nan"))
+        assertTrue(json.isNull("inf"))
+        assertEquals(mapOf("ok" to BrudcastValue.Number(1.0)), BrudcastValue.properties(mapOf("ok" to 1, "nan" to Double.NaN, "inf" to Float.NEGATIVE_INFINITY)))
     }
 
     @Test

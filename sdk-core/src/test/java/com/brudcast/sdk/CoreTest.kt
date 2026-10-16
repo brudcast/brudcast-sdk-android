@@ -70,4 +70,21 @@ class CoreTest {
     fun localEnvironmentTargetsTheEmulatorHost() {
         assertEquals("http://10.0.2.2:8191/sdk/v1", BrudcastEnvironment.Local().baseUrl)
     }
+
+    @Test
+    fun tellsARefusedKeyFromARefusedUserHash() {
+        val hashRefused = BrudcastApiError(401, null, "The user hash does not match this user")
+        val keyRefused = BrudcastApiError(401, null, "Unknown or disabled publishable key")
+        assertFalse(BrudcastCore.isKeyRejection(hashRefused, hadIdentity = true))
+        assertTrue(BrudcastCore.isKeyRejection(keyRefused, hadIdentity = true))
+        assertTrue(BrudcastCore.isKeyRejection(hashRefused, hadIdentity = false))
+        assertFalse(BrudcastCore.isKeyRejection(BrudcastApiError(401, "identity_rejected", "publishable key"), hadIdentity = true))
+        assertTrue(BrudcastCore.isKeyRejection(BrudcastApiError(401, "key_rejected", ""), hadIdentity = true))
+    }
+
+    @Test
+    fun aRequestTheClientCouldNotBuildIsNotRetried() {
+        assertFalse(BrudcastApiError(null, "client", "bad url").isRetryable)
+        assertTrue(BrudcastApiError(null, null, "timeout").isRetryable)
+    }
 }

@@ -95,6 +95,14 @@ class InAppDesignTest {
     }
 
     @Test
+    fun anUnreadableTriggerStillYieldsAMessageThatNeverFires() {
+        val message = InAppMessage.parse(Fixtures.message(trigger = """{"type":"app_open"}"""))!!
+        assertTrue(message.triggerUnreadable)
+        assertFalse(TriggerMatcher.matches(message.trigger, InAppOccurrence.Session))
+        assertFalse(TriggerMatcher.matches(message.trigger, InAppOccurrence.Event("app_open", emptyMap())))
+    }
+
+    @Test
     fun keepsTrailingButtonsTogether() {
         val (content, buttons) = splitTrailingButtons(InAppDesign.parse(Fixtures.design()).blocks)
         assertEquals(listOf("img", "t"), content.map { it.id })

@@ -31,6 +31,9 @@ internal data class InAppTrigger(
     companion object {
         val ON_SESSION = InAppTrigger(InAppTriggerType.ON_SESSION, null, null, emptyList())
 
+        /** Stands in for a trigger this SDK cannot read; no occurrence ever matches it. */
+        val UNREADABLE = InAppTrigger(InAppTriggerType.EVENT, null, null, emptyList())
+
         fun parse(json: JSONObject?): InAppTrigger? {
             json ?: return ON_SESSION
             val type = InAppTriggerType.from(json.text("type") ?: "on_session") ?: return null
@@ -96,6 +99,7 @@ internal data class InAppMessage(
     val startsAt: Long?,
     val endsAt: Long?,
     val createdAt: Long,
+    val triggerUnreadable: Boolean = false,
 ) {
     val design: InAppDesign? get() = (designState as? InAppDesignState.Ready)?.design
 
@@ -117,14 +121,15 @@ internal data class InAppMessage(
          * Reads one entry of a feed or inbox page.
          *
          * @param json The message view.
-         * @return The message, or null when it lacks an id, a format or a readable trigger. A design
-         *   this SDK cannot draw still yields a message, marked unsupported, so it can be reported.
+         * @return The message, or null when it lacks an id or a format. A design this SDK cannot
+         *   draw, or a trigger it cannot read, still yields a message that never shows on its own, so
+         *   it can be reported.
          */
         fun parse(json: JSONObject?): InAppMessage? {
             json ?: return null
             val id = json.text("id") ?: return null
             val format = InAppFormat.from(json.text("format")) ?: return null
-            val trigger = InAppTrigger.parse(json.optJSONObject("trigger")) ?: return null
+            val trigger = InAppTrigger.parse(json.optJSONObject("trigger"))
             val rawDesign = json.optJSONObject("design") ?: JSONObject()
             val state = try {
                 InAppDesignState.Ready(InAppDesign.parse(rawDesign))
@@ -140,7 +145,7 @@ internal data class InAppMessage(
                 format = format,
                 designState = state,
                 rawDesign = rawDesign,
-                trigger = trigger,
+                trigger = trigger ?: InAppTrigger.UNREADABLE,
                 displayRules = InAppDisplayRules.parse(json.optJSONObject("displayRules")),
                 inboxTitle = inbox.text("title").orEmpty(),
                 inboxPreview = inbox.text("preview").orEmpty(),
@@ -152,6 +157,7 @@ internal data class InAppMessage(
                 startsAt = BrudcastDates.parse(json.text("startsAt")),
                 endsAt = BrudcastDates.parse(json.text("endsAt")),
                 createdAt = BrudcastDates.parse(json.text("createdAt")) ?: System.currentTimeMillis(),
+                triggerUnreadable = trigger == null,
             )
         }
     }
@@ -162,15 +168,35 @@ internal data class InAppMessage(
  *
  * @property design The design document as JSON, for apps that draw messages themselves.
  */
-public data class BrudcastInAppMessage(
-    val id: String,
-    val campaignId: String?,
-    val format: InAppFormat,
-    val isTest: Boolean,
-    val title: String,
-    val preview: String,
-    val thumbnailUrl: String?,
-    val isRead: Boolean,
-    val createdAt: Long,
-    val design: String,
-)
+public class BrudcastInAppMessage(
+    public val id: String,
+    public val campaignId: String?,
+    public val format: InAppFormat,
+    public val isTest: Boolean,
+    public val title: String,
+    public val preview: String,
+    public val thumbnailUrl: String?,
+    public val isRead: Boolean,
+    public val createdAt: Long,
+    public val design: String,
+) {
+    override fun equals(other: Any?): Boolean =
+        other is BrudcastInAppMessage &&
+            id == other.id &&
+            campaignId == other.campaignId &&
+            format == other.format &&
+            isTest == other.isTest &&
+            title == other.title &&
+            preview == other.preview &&
+            thumbnailUrl == other.thumbnailUrl &&
+            isRead == other.isRead &&
+            createdAt == other.createdAt &&
+            design == other.design
+
+    override fun hashCode(): Int = listOf<Any?>(id, campaignId, format, isTest, title, preview, thumbnailUrl, isRead, createdAt, design).hashCode()
+
+    override fun toString(): String = "BrudcastInAppMessage(id=$id, campaignId=$campaignId, format=$format, isTest=$isTest, title=$title, preview=$preview, thumbnailUrl=$thumbnailUrl, isRead=$isRead, createdAt=$createdAt, design=$design)"
+
+    internal fun withRead(): BrudcastInAppMessage =
+        BrudcastInAppMessage(id, campaignId, format, isTest, title, preview, thumbnailUrl, true, createdAt, design)
+}

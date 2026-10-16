@@ -16,11 +16,21 @@ import kotlinx.coroutines.flow.asStateFlow
 import java.util.concurrent.ConcurrentHashMap
 
 /** One page of the inbox, newest first. */
-public data class BrudcastInboxPage(
-    val messages: List<BrudcastInAppMessage>,
-    val unreadCount: Int,
-    val hasMore: Boolean,
-)
+public class BrudcastInboxPage(
+    public val messages: List<BrudcastInAppMessage>,
+    public val unreadCount: Int,
+    public val hasMore: Boolean,
+) {
+    override fun equals(other: Any?): Boolean =
+        other is BrudcastInboxPage &&
+            messages == other.messages &&
+            unreadCount == other.unreadCount &&
+            hasMore == other.hasMore
+
+    override fun hashCode(): Int = listOf<Any?>(messages, unreadCount, hasMore).hashCode()
+
+    override fun toString(): String = "BrudcastInboxPage(messages=$messages, unreadCount=$unreadCount, hasMore=$hasMore)"
+}
 
 /** Receives the unread count whenever it changes. Called on the main thread. */
 public fun interface BrudcastUnreadCountListener {

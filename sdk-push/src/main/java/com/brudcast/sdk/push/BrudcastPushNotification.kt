@@ -17,16 +17,31 @@ public object BrudcastPushKeys {
  *
  * @property data The custom data the campaign carried, without the Brudcast keys.
  */
-public data class BrudcastPushNotification(
-    val messageId: String,
-    val campaignId: String?,
-    val applicationId: String?,
-    val title: String?,
-    val body: String?,
-    val imageUrl: String?,
-    val clickUrl: String?,
-    val data: Map<String, String>,
+public class BrudcastPushNotification(
+    public val messageId: String,
+    public val campaignId: String?,
+    public val applicationId: String?,
+    public val title: String?,
+    public val body: String?,
+    public val imageUrl: String?,
+    public val clickUrl: String?,
+    public val data: Map<String, String>,
 ) {
+    override fun equals(other: Any?): Boolean =
+        other is BrudcastPushNotification &&
+            messageId == other.messageId &&
+            campaignId == other.campaignId &&
+            applicationId == other.applicationId &&
+            title == other.title &&
+            body == other.body &&
+            imageUrl == other.imageUrl &&
+            clickUrl == other.clickUrl &&
+            data == other.data
+
+    override fun hashCode(): Int = listOf<Any?>(messageId, campaignId, applicationId, title, body, imageUrl, clickUrl, data).hashCode()
+
+    override fun toString(): String = "BrudcastPushNotification(messageId=$messageId, campaignId=$campaignId, applicationId=$applicationId, title=$title, body=$body, imageUrl=$imageUrl, clickUrl=$clickUrl, data=$data)"
+
     public companion object {
         /**
          * Reads a notification's data.
@@ -60,6 +75,8 @@ public data class BrudcastPushNotification(
          * @param extras The intent extras.
          * @return The notification, or null when the extras are not from a Brudcast notification.
          */
+        private const val SDK_EXTRA_PREFIX = "com.brudcast.sdk."
+
         @JvmStatic
         public fun fromExtras(extras: Bundle?): BrudcastPushNotification? {
             extras ?: return null
@@ -67,7 +84,7 @@ public data class BrudcastPushNotification(
             for (key in extras.keySet()) {
                 @Suppress("DEPRECATION")
                 val value = extras.get(key)
-                if (value is String) data[key] = value
+                if (value is String && !key.startsWith(SDK_EXTRA_PREFIX)) data[key] = value
             }
             return from(data)
         }

@@ -27,11 +27,12 @@ public sealed class BrudcastValue {
     /**
      * Returns the value in the form `org.json` writes.
      *
-     * @return A String, a Long, a Double, a Boolean or `JSONObject.NULL`.
+     * @return A String, a Long, a Double, a Boolean or `JSONObject.NULL`. A NaN or infinite number
+     *   becomes `JSONObject.NULL`, because JSON cannot carry it and `org.json` throws on it.
      */
     public fun toJson(): Any = when (this) {
         is Text -> value
-        is Number -> if (value % 1.0 == 0.0 && kotlin.math.abs(value) < 9.007199254740992E15) value.toLong() else value
+        is Number -> if (!value.isFinite()) JSONObject.NULL else if (value % 1.0 == 0.0 && kotlin.math.abs(value) < 9.007199254740992E15) value.toLong() else value
         is Bool -> value
         Null -> JSONObject.NULL
     }
@@ -54,7 +55,8 @@ public sealed class BrudcastValue {
         }
 
         /**
-         * Converts a map of host values, dropping and logging values the API cannot carry.
+         * Converts a map of host values, dropping and logging values the API cannot carry, NaN and
+         * infinite numbers among them.
          *
          * @param raw The host's properties.
          * @return The properties.
@@ -67,6 +69,8 @@ public sealed class BrudcastValue {
                 val converted = from(value)
                 if (converted == null) {
                     BrudcastLogger.warning("Property \"$key\" is not a string, number, boolean or null; it is dropped")
+                } else if (converted is Number && !converted.value.isFinite()) {
+                    BrudcastLogger.warning("Property \"$key\" is ${converted.value}, which JSON cannot carry; it is dropped")
                 } else {
                     result[key] = converted
                 }
