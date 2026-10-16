@@ -10,15 +10,29 @@ import java.util.concurrent.ScheduledExecutorService
  *
  * @property serverTimeOffset The service's clock minus the device's, in milliseconds.
  */
-public data class BrudcastSession(
-    val token: String,
-    val expiresAt: Long,
-    val userId: String,
-    val externalId: String?,
-    val verified: Boolean,
-    val optedOut: Boolean,
-    val serverTimeOffset: Long,
+public class BrudcastSession(
+    public val token: String,
+    public val expiresAt: Long,
+    public val userId: String,
+    public val externalId: String?,
+    public val verified: Boolean,
+    public val optedOut: Boolean,
+    public val serverTimeOffset: Long,
 ) {
+    override fun equals(other: Any?): Boolean =
+        other is BrudcastSession &&
+            token == other.token &&
+            expiresAt == other.expiresAt &&
+            userId == other.userId &&
+            externalId == other.externalId &&
+            verified == other.verified &&
+            optedOut == other.optedOut &&
+            serverTimeOffset == other.serverTimeOffset
+
+    override fun hashCode(): Int = listOf<Any?>(token, expiresAt, userId, externalId, verified, optedOut, serverTimeOffset).hashCode()
+
+    override fun toString(): String = "BrudcastSession(expiresAt=$expiresAt, userId=$userId, externalId=$externalId, verified=$verified, optedOut=$optedOut, serverTimeOffset=$serverTimeOffset)"
+
     /** The current time on the service's clock, as estimated when the session opened. */
     public fun serverNow(): Long = System.currentTimeMillis() + serverTimeOffset
 }

@@ -33,8 +33,11 @@ import org.json.JSONObject
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.UUID
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.min
 import kotlin.math.pow
 
@@ -50,7 +53,10 @@ public enum class BrudcastPushPermission(public val wire: String) {
 /** What the host wants done with a Brudcast notification that arrives while the app is open. */
 public enum class BrudcastNotificationDecision { SHOW, SUPPRESS }
 
-/** Decides whether a notification arriving in the foreground shows. Called on the main thread. */
+/**
+ * Decides whether a notification the SDK is about to post shows. Called on the main thread; the SDK
+ * waits for it at most two seconds before showing the notification.
+ */
 public fun interface BrudcastNotificationHandler {
     public fun handle(notification: BrudcastPushNotification): BrudcastNotificationDecision
 }
@@ -70,7 +76,14 @@ public object PushModule : BrudcastModule, BrudcastPushPermissionRequesting {
 
     internal const val EVENT_CHANNEL = "push"
     internal const val EXTRA_HANDLED = "com.brudcast.sdk.push.HANDLED"
-    internal const val EXTRA_FROM_SDK = "com.brudcast.sdk.push.FROM_SDK"
+    internal const val EXTRA_TOKEN = "com.brudcast.sdk.push.TOKEN"
+    private const val INTENT_TOKEN_KEY = "brudcast.push.intent_token"
+    private const val FCM_ICON_METADATA = "com.google.firebase.messaging.default_notification_icon"
+    private const val HANDLER_TIMEOUT_MS = 2_000L
+    private const val IMAGE_CONNECT_TIMEOUT_MS = 3_000
+    private const val IMAGE_READ_TIMEOUT_MS = 4_000
+    private const val MAX_IMAGE_BYTES = 5 * 1_024 * 1_024
+    private const val MAX_IMAGE_EDGE = 1_440
     private const val TOKEN_KEY = "brudcast.push.token"
     private const val REGISTERED_KEY = "brudcast.push.registered"
     private const val PERMISSION_KEY = "brudcast.push.permission"
@@ -93,11 +106,18 @@ public object PushModule : BrudcastModule, BrudcastPushPermissionRequesting {
     @Volatile
     private var notificationHandler: BrudcastNotificationHandler? = null
 
+    @Volatile
+    private var intentToken: String? = null
+
     /** The name of the notification channel the SDK posts to. */
     @Volatile
     public var channelName: String = "Notifications"
 
-    /** The small icon of notifications the SDK posts. The app icon is used when zero. */
+    /**
+     * The small icon of notifications the SDK posts, a monochrome drawable. When zero, the icon set
+     * for FCM in the manifest's `com.google.firebase.messaging.default_notification_icon` is used,
+     * then a plain bell.
+     */
     @Volatile
     public var smallIcon: Int = 0
 
@@ -108,6 +128,9 @@ public object PushModule : BrudcastModule, BrudcastPushPermissionRequesting {
         this.context = context
         token = context.storage.string(TOKEN_KEY)
         asked = context.storage.bool("brudcast.push.asked")
+        intentToken = context.storage.string(INTENT_TOKEN_KEY) ?: UUID.randomUUID().toString().also {
+            context.storage.setString(INTENT_TOKEN_KEY, it)
+        }
         permission = BrudcastPushPermission.from(context.storage.string(PERMISSION_KEY)) ?: BrudcastPushPermission.NOT_DETERMINED
         permissionState.value = permission
         refreshPermission()
@@ -216,6 +239,9 @@ public object PushModule : BrudcastModule, BrudcastPushPermissionRequesting {
      * display it, shows it. Call it from `FirebaseMessagingService.onMessageReceived`, or use
      * `BrudcastPushFirebase`.
      *
+     * The notification is posted before this returns, since FCM may end the process as soon as
+     * `onMessageReceived` does. Called on the main thread, it posts from a background thread instead.
+     *
      * @param context Any context.
      * @param notification The notification, from [BrudcastPushNotification.from].
      * @return True when the notification was from Brudcast and was handled.
@@ -224,18 +250,53 @@ public object PushModule : BrudcastModule, BrudcastPushPermissionRequesting {
         Brudcast.withContext {
             it.enqueue(event("push_received", notification))
         }
-        main.post {
-            val decision = try {
-                notificationHandler?.handle(notification) ?: BrudcastNotificationDecision.SHOW
-            } catch (error: RuntimeException) {
-                BrudcastLogger.error("The notification handler threw: ${error.message}")
-                BrudcastNotificationDecision.SHOW
+        val application = context.applicationContext
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            if (decide(notification) == BrudcastNotificationDecision.SHOW) {
+                Thread { showSafely(application, notification) }.start()
             }
-            if (decision == BrudcastNotificationDecision.SHOW) {
-                Thread { show(context.applicationContext, notification) }.start()
-            }
+            return true
+        }
+        if (decideOnMain(notification) == BrudcastNotificationDecision.SHOW) {
+            showSafely(application, notification)
         }
         return true
+    }
+
+    private fun decide(notification: BrudcastPushNotification): BrudcastNotificationDecision = try {
+        notificationHandler?.handle(notification) ?: BrudcastNotificationDecision.SHOW
+    } catch (error: RuntimeException) {
+        BrudcastLogger.error("The notification handler threw: ${error.message}")
+        BrudcastNotificationDecision.SHOW
+    }
+
+    /**
+     * Asks the notification handler on the main thread, waiting for it a bounded time.
+     *
+     * @param notification The notification.
+     * @return The handler's decision, or [BrudcastNotificationDecision.SHOW] when there is no
+     *   handler or it did not answer in time.
+     */
+    private fun decideOnMain(notification: BrudcastPushNotification): BrudcastNotificationDecision {
+        if (notificationHandler == null) return BrudcastNotificationDecision.SHOW
+        val decision = AtomicReference(BrudcastNotificationDecision.SHOW)
+        val answered = CountDownLatch(1)
+        main.post {
+            decision.set(decide(notification))
+            answered.countDown()
+        }
+        if (!answered.await(HANDLER_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
+            BrudcastLogger.warning("The notification handler did not answer in time; the notification shows")
+        }
+        return decision.get()
+    }
+
+    private fun showSafely(context: Context, notification: BrudcastPushNotification) {
+        try {
+            show(context, notification)
+        } catch (error: RuntimeException) {
+            BrudcastLogger.error("Could not show notification ${notification.messageId}: ${error.message}")
+        }
     }
 
     /**
@@ -249,6 +310,8 @@ public object PushModule : BrudcastModule, BrudcastPushPermissionRequesting {
         intent ?: return false
         if (intent.getBooleanExtra(EXTRA_HANDLED, false)) return false
         val notification = BrudcastPushNotification.fromExtras(intent.extras) ?: return false
+        val token = intent.getStringExtra(EXTRA_TOKEN)
+        val verified = token != null && token == intentToken
         intent.putExtra(EXTRA_HANDLED, true)
         val clickUrl = notification.clickUrl
         Brudcast.withContext { context ->
@@ -262,6 +325,7 @@ public object PushModule : BrudcastModule, BrudcastPushPermissionRequesting {
                         clickUrl,
                         opensInApp = false,
                         source = BrudcastAction.Source.Push(notification.messageId),
+                        verified = verified,
                     ),
                 )
             }
@@ -300,7 +364,7 @@ public object PushModule : BrudcastModule, BrudcastPushPermissionRequesting {
         val launch = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             putExtras(extras)
-            putExtra(EXTRA_FROM_SDK, true)
+            intentToken?.let { putExtra(EXTRA_TOKEN, it) }
         } ?: return
         val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         val requestCode = notification.messageId.hashCode()
@@ -312,7 +376,7 @@ public object PushModule : BrudcastModule, BrudcastPushPermissionRequesting {
         )
         val image = notification.imageUrl?.let(::download)
         val builder = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(if (smallIcon != 0) smallIcon else context.applicationInfo.icon)
+            .setSmallIcon(smallIcon(context))
             .setContentTitle(notification.title)
             .setContentText(notification.body)
             .setAutoCancel(true)
@@ -330,20 +394,63 @@ public object PushModule : BrudcastModule, BrudcastPushPermissionRequesting {
         }
     }
 
+    private fun smallIcon(context: Context): Int {
+        if (smallIcon != 0) return smallIcon
+        val fromManifest = try {
+            @Suppress("DEPRECATION")
+            context.packageManager.getApplicationInfo(context.packageName, PackageManager.GET_META_DATA).metaData?.getInt(FCM_ICON_METADATA, 0) ?: 0
+        } catch (_: PackageManager.NameNotFoundException) {
+            0
+        }
+        if (fromManifest != 0) return fromManifest
+        BrudcastLogger.logOnce("push-small-icon", BrudcastLogLevel.WARNING) {
+            "Set PushModule.smallIcon to a monochrome drawable; notifications use a plain bell until then"
+        }
+        return R.drawable.brudcast_ic_notification
+    }
+
+    /**
+     * Downloads a notification image within FCM's time budget, refusing anything over 5 MB and
+     * scaling the rest down so its longest edge fits a notification.
+     *
+     * @param url The image URL; only HTTPS is fetched.
+     * @return The image, or null.
+     */
     private fun download(url: String): Bitmap? {
         if (!url.startsWith("https://", true)) return null
         var connection: HttpURLConnection? = null
         return try {
             connection = (URL(url).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 5_000
-                readTimeout = 5_000
+                connectTimeout = IMAGE_CONNECT_TIMEOUT_MS
+                readTimeout = IMAGE_READ_TIMEOUT_MS
             }
-            if (connection.responseCode in 200..299) connection.inputStream.use(BitmapFactory::decodeStream) else null
+            if (connection.responseCode !in 200..299 || connection.contentLength > MAX_IMAGE_BYTES) return null
+            val bytes = connection.inputStream.use { input ->
+                val buffer = java.io.ByteArrayOutputStream()
+                val chunk = ByteArray(16 * 1_024)
+                while (true) {
+                    val read = input.read(chunk)
+                    if (read < 0) break
+                    buffer.write(chunk, 0, read)
+                    if (buffer.size() > MAX_IMAGE_BYTES) return null
+                }
+                buffer.toByteArray()
+            }
+            decodeScaled(bytes)
         } catch (_: IOException) {
             null
         } finally {
             connection?.disconnect()
         }
+    }
+
+    private fun decodeScaled(bytes: ByteArray): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sample = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / (sample * 2) >= MAX_IMAGE_EDGE) sample *= 2
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })
     }
 
     private fun currentPermission(context: Context): BrudcastPushPermission {

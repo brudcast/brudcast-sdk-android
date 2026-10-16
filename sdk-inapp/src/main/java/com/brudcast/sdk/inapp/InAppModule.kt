@@ -92,6 +92,7 @@ public object InAppModule : BrudcastModule {
             onUnauthorized = { sync() },
         )
         InAppPresenter.install(context.application)
+        InAppImageLoader.install(context.application.cacheDir)
     }
 
     override fun sessionDidOpen(session: BrudcastSession, payload: JSONObject) {
@@ -239,8 +240,13 @@ public object InAppModule : BrudcastModule {
         }
         for (message in store.messages) {
             val state = message.designState
-            if (state is InAppDesignState.Unsupported && store.markUnsupportedReported(message.id)) {
-                BrudcastLogger.warning("Message ${message.id} needs a newer SDK or has an unreadable design: ${state.error.message}")
+            val reason = when {
+                state is InAppDesignState.Unsupported -> state.error.message
+                message.triggerUnreadable -> "unreadable trigger"
+                else -> null
+            }
+            if (reason != null && store.markUnsupportedReported(message.id)) {
+                BrudcastLogger.warning("Message ${message.id} needs a newer SDK or has an unreadable design: $reason")
                 context.enqueue(
                     BrudcastEvent(
                         type = "render_unsupported",

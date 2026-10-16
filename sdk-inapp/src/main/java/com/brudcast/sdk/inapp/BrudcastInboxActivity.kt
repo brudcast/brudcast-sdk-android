@@ -164,7 +164,7 @@ private fun InboxScreen(title: String, theme: InAppTheme, onClose: () -> Unit) {
                         InboxRow(message) {
                             inbox.markRead(message.id)
                             val index = messages.indexOf(message)
-                            if (index >= 0) messages[index] = message.copy(isRead = true)
+                            if (index >= 0) messages[index] = message.withRead()
                             opened = message
                         }
                     }

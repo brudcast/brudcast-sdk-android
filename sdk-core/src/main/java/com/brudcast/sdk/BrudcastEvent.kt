@@ -21,16 +21,31 @@ import java.util.UUID
  *   batch, so a type one deployment of the service does not accept cannot fail the others.
  * @property id The client id the service deduplicates on.
  */
-public data class BrudcastEvent(
-    val type: String,
-    val messageId: String? = null,
-    val buttonId: String? = null,
-    val name: String? = null,
-    val properties: Map<String, BrudcastValue> = emptyMap(),
-    val occurredAt: Long = System.currentTimeMillis(),
-    val channel: String = CORE_CHANNEL,
-    val id: String = UUID.randomUUID().toString(),
+public class BrudcastEvent(
+    public val type: String,
+    public val messageId: String? = null,
+    public val buttonId: String? = null,
+    public val name: String? = null,
+    public val properties: Map<String, BrudcastValue> = emptyMap(),
+    public val occurredAt: Long = System.currentTimeMillis(),
+    public val channel: String = CORE_CHANNEL,
+    public val id: String = UUID.randomUUID().toString(),
 ) {
+    /**
+     * The external id of the user signed in when the event was queued, or null for an anonymous
+     * user. The core sets it, so a batch is only ever sent with that user's session.
+     */
+    internal var owner: String? = null
+
+    override fun equals(other: Any?): Boolean =
+        other is BrudcastEvent && id == other.id && type == other.type && messageId == other.messageId &&
+            buttonId == other.buttonId && name == other.name && properties == other.properties &&
+            occurredAt == other.occurredAt && channel == other.channel && owner == other.owner
+
+    override fun hashCode(): Int = id.hashCode()
+
+    override fun toString(): String = "BrudcastEvent(type=$type, id=$id, messageId=$messageId, name=$name, channel=$channel)"
+
     internal fun toApiJson(): JSONObject {
         val json = JSONObject()
             .put("id", id)
@@ -43,7 +58,7 @@ public data class BrudcastEvent(
         return json
     }
 
-    internal fun toStoredJson(): JSONObject = toApiJson().put("channel", channel)
+    internal fun toStoredJson(): JSONObject = toApiJson().put("channel", channel).apply { owner?.let { put("owner", it) } }
 
     public companion object {
         public const val CORE_CHANNEL: String = "core"
@@ -62,7 +77,7 @@ public data class BrudcastEvent(
                 occurredAt = occurredAt,
                 channel = text("channel") ?: CORE_CHANNEL,
                 id = id,
-            )
+            ).also { it.owner = text("owner") }
         }
     }
 }

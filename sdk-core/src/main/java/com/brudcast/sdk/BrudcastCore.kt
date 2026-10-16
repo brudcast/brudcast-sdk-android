@@ -59,6 +59,9 @@ internal class BrudcastCore(
 
     private val events = EventQueue(storage)
     private var identity: BrudcastIdentity? = loadIdentity()
+    private var eventOwner: String? = identity?.externalId
+    private val retiredSessions = HashMap<String, BrudcastSession>()
+    private var persistScheduled = false
     private var identityRejected = false
     private var keyRejected = false
     private var trackingDisabled = storage.bool(TRACKING_DISABLED_KEY)
@@ -92,23 +95,25 @@ internal class BrudcastCore(
     }
 
     fun post(task: () -> Unit) {
-        executor.execute {
-            try {
-                task()
-            } catch (error: RuntimeException) {
-                BrudcastLogger.error("Internal error: ${error.message}")
-            }
-        }
+        executor.execute { guarded(task) }
     }
 
     private fun schedule(delayMs: Long, task: () -> Unit): ScheduledFuture<*> =
-        executor.schedule({
-            try {
-                task()
-            } catch (error: RuntimeException) {
-                BrudcastLogger.error("Internal error: ${error.message}")
-            }
-        }, delayMs, TimeUnit.MILLISECONDS)
+        executor.schedule({ guarded(task) }, delayMs, TimeUnit.MILLISECONDS)
+
+    /**
+     * Runs a task on the executor, logging any exception instead of letting it kill the thread and
+     * crash the app. `org.json` throws the checked `JSONException`, so every exception is caught.
+     *
+     * @param task The task.
+     */
+    private fun guarded(task: () -> Unit) {
+        try {
+            task()
+        } catch (error: Exception) {
+            BrudcastLogger.error("Internal error: ${error.javaClass.simpleName}: ${error.message}")
+        }
+    }
 
     fun identify(externalId: String, userHash: String?, traits: BrudcastTraits?) {
         val trimmed = externalId.trim()
@@ -124,11 +129,15 @@ internal class BrudcastCore(
             val next = BrudcastIdentity(trimmed, userHash, traits)
             if (next == identity && session?.externalId == trimmed && !identityRejected) return@post
             val userChanged = identity?.externalId != trimmed
+            eventOwner = trimmed
             flushThen {
                 identity = next
                 identityRejected = false
                 persistIdentity()
-                if (userChanged) session = null
+                if (userChanged) {
+                    retire(session)
+                    session = null
+                }
                 reopenSession()
             }
         }
@@ -137,11 +146,13 @@ internal class BrudcastCore(
     fun reset() {
         post {
             val previous = session
+            eventOwner = null
             flushThen {
                 val finish = {
                     identity = null
                     identityRejected = false
                     persistIdentity()
+                    retire(session ?: previous)
                     session = null
                     modules.forEach { it.didReset() }
                     reopenSession()
@@ -277,7 +288,7 @@ internal class BrudcastCore(
 
     private fun handleSessionFailure(error: BrudcastApiError, hadIdentity: Boolean) {
         if (error.statusCode == 401) {
-            if (hadIdentity && !error.message.contains("publishable key", ignoreCase = true)) {
+            if (!isKeyRejection(error, hadIdentity)) {
                 identityRejected = true
                 BrudcastLogger.error("The service refused this user's identity: ${error.message}. Compute userHash on your server as HMAC-SHA256(identitySecret, externalId), and call identify again.")
             } else {
@@ -358,9 +369,20 @@ internal class BrudcastCore(
 
     fun enqueue(event: BrudcastEvent) {
         if (trackingDisabled) return
-        if (events.enqueue(event)) flush()
+        event.owner = eventOwner
+        val flushNow = events.enqueue(event)
+        schedulePersist()
+        if (flushNow) flush()
     }
 
+    /**
+     * Sends the next batch with the session of the user who queued it.
+     *
+     * Anonymous events go with whoever is signed in now, since an anonymous device that signs in is
+     * the same person. Events of a user whose session is still opening wait for it. Events of a user
+     * who has since signed out go with that user's last session while it lasts, and are dropped
+     * after that rather than credited to someone else.
+     */
     fun flush() {
         if (flushing) return
         val batch = events.nextBatch()
@@ -368,34 +390,77 @@ internal class BrudcastCore(
             drainFlushWaiters()
             return
         }
-        flushing = true
         val body = JSONObject().put("events", JSONArray(batch.map { it.toApiJson() }))
-        authorizedRequest(BrudcastHttpMethod.POST, "/events", emptyMap(), body, false) { result ->
-            flushing = false
-            when (result) {
-                is BrudcastResult.Success -> {
-                    events.complete(batch, EventQueue.Outcome.SENT)
-                    flush()
-                }
-                is BrudcastResult.Failure -> {
-                    val error = result.error
-                    when {
-                        error.statusCode == 401 || error.code == "key_rejected" || error.code == "identity_rejected" -> {
-                            events.complete(batch, EventQueue.Outcome.UNAUTHORIZED)
-                            drainFlushWaiters()
-                        }
-                        error.isRetryable -> {
-                            events.complete(batch, EventQueue.Outcome.RETRY)
-                            drainFlushWaiters()
-                        }
-                        else -> {
-                            BrudcastLogger.warning("Events rejected: $error")
-                            events.complete(batch, EventQueue.Outcome.REJECTED)
-                            flush()
-                        }
-                    }
-                }
+        val owner = batch.first().owner
+        if (owner == null || owner == identity?.externalId) {
+            flushing = true
+            authorizedRequest(BrudcastHttpMethod.POST, "/events", emptyMap(), body, false) { result ->
+                finishFlush(batch, result, null)
             }
+            return
+        }
+        if (owner == eventOwner) {
+            events.complete(batch, EventQueue.Outcome.UNAUTHORIZED)
+            drainFlushWaiters()
+            return
+        }
+        val retired = retiredSessions[owner]
+        if (retired == null || isExpiring(retired)) {
+            retiredSessions.remove(owner)
+            BrudcastLogger.warning("${batch.size} events of a signed-out user outlived their session")
+            events.complete(batch, EventQueue.Outcome.DISCARDED)
+            flush()
+            return
+        }
+        flushing = true
+        api.send(BrudcastHttpMethod.POST, "/events", body = body, token = retired.token) { result ->
+            post { finishFlush(batch, result, owner) }
+        }
+    }
+
+    private fun finishFlush(batch: List<BrudcastEvent>, result: BrudcastResult, retiredOwner: String?) {
+        flushing = false
+        if (result is BrudcastResult.Success) {
+            events.complete(batch, EventQueue.Outcome.SENT)
+            flush()
+            return
+        }
+        val error = (result as BrudcastResult.Failure).error
+        when {
+            error.statusCode == 401 && retiredOwner != null -> {
+                retiredSessions.remove(retiredOwner)
+                events.complete(batch, EventQueue.Outcome.DISCARDED)
+                flush()
+            }
+            error.statusCode == 401 || error.code == "key_rejected" || error.code == "identity_rejected" -> {
+                events.complete(batch, EventQueue.Outcome.UNAUTHORIZED)
+                drainFlushWaiters()
+            }
+            error.isRetryable -> {
+                events.complete(batch, EventQueue.Outcome.RETRY)
+                drainFlushWaiters()
+            }
+            else -> {
+                BrudcastLogger.warning("Events rejected: $error")
+                val invalid = error.statusCode in INVALID_BATCH_STATUSES
+                events.complete(batch, if (invalid) EventQueue.Outcome.REJECTED else EventQueue.Outcome.DISCARDED)
+                flush()
+            }
+        }
+    }
+
+    private fun retire(current: BrudcastSession?) {
+        retiredSessions.entries.removeAll { isExpiring(it.value) }
+        val externalId = current?.externalId ?: return
+        if (!isExpiring(current)) retiredSessions[externalId] = current
+    }
+
+    private fun schedulePersist() {
+        if (persistScheduled) return
+        persistScheduled = true
+        schedule(PERSIST_DELAY_MS) {
+            persistScheduled = false
+            events.persistIfNeeded()
         }
     }
 
@@ -428,6 +493,7 @@ internal class BrudcastCore(
     private fun appDidBecomeActive() {
         if (isAppActive) return
         isAppActive = true
+        keyRejected = false
         flushTimer?.cancel(false)
         flushTimer = executor.scheduleWithFixedDelay({ post { flush() } }, FLUSH_INTERVAL_MS, FLUSH_INTERVAL_MS, TimeUnit.MILLISECONDS)
         if (session == null || isExpiring(session)) {
@@ -440,6 +506,7 @@ internal class BrudcastCore(
 
     private fun appDidEnterBackground() {
         isAppActive = false
+        events.persistIfNeeded()
         flushTimer?.cancel(false)
         flushTimer = null
         modules.forEach { it.appDidEnterBackground() }
@@ -488,8 +555,27 @@ internal class BrudcastCore(
         private const val FLUSH_INTERVAL_MS = 10_000L
         private const val REFRESH_LEEWAY_MS = 60_000L
         private const val MAX_SESSION_BACKOFF_MS = 300_000L
+        private const val PERSIST_DELAY_MS = 1_000L
+        private val INVALID_BATCH_STATUSES = setOf(400, 413, 422)
 
         fun isValidEventName(name: String): Boolean = EVENT_NAME_PATTERN.matches(name)
+
+        /**
+         * Tells a refused publishable key apart from a refused user hash on a 401 from `/sessions`.
+         *
+         * The service's `code` decides when it sends one. Otherwise a request without an identity
+         * can only have failed on its key, and one with an identity failed on its key only when the
+         * message names the key.
+         *
+         * @param error The 401.
+         * @param hadIdentity Whether the request carried an external id.
+         * @return True when the key was refused.
+         */
+        fun isKeyRejection(error: BrudcastApiError, hadIdentity: Boolean): Boolean = when (error.code) {
+            "key_rejected" -> true
+            "identity_rejected" -> false
+            else -> !hadIdentity || error.message.contains("publishable key", ignoreCase = true)
+        }
 
         fun parseSession(payload: JSONObject): BrudcastSession? {
             val sessionJson = payload.optJSONObject("session") ?: return null

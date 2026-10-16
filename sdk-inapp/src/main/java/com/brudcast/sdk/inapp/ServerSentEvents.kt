@@ -64,6 +64,8 @@ internal class StreamClient(
     private var failures = 0
     private var reconnect: ScheduledFuture<*>? = null
     private var endpoint: (() -> Pair<String, String>?)? = null
+
+    @Volatile
     private var generation = 0
 
     /** Opens the stream and keeps reopening it after drops until [stop]. Call on the core thread. */
@@ -118,7 +120,15 @@ internal class StreamClient(
                 readTimeout = 90_000
             }
             connection = open
+            if (current != generation) {
+                open.disconnect()
+                return
+            }
             val status = open.responseCode
+            if (current != generation) {
+                open.disconnect()
+                return
+            }
             if (status == 401) {
                 unauthorized = true
             } else if (status == 200) {
