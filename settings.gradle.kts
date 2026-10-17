@@ -16,4 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "brudcast-sdk-android"
 
-include(":sdk-core", ":sdk-inapp", ":sdk-push", ":sdk-push-firebase", ":sdk-bom")
+include(":sdk-core", ":sdk-inapp", ":sdk-push", ":sdk-push-firebase", ":sdk-bom", ":sample")
