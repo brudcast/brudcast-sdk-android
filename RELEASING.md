@@ -2,30 +2,50 @@
 
 The SDK is published to [Maven Central](https://central.sonatype.com) as five artifacts under
 `com.brudcast`: `sdk-core`, `sdk-inapp`, `sdk-push`, `sdk-push-firebase` and `sdk-bom`. Publishing
-a GitHub release runs `.github/workflows/release.yml`, which tests, signs and uploads them to the
-Central Portal with the [Gradle Maven Publish plugin](https://vanniktech.github.io/gradle-maven-publish-plugin/).
+a GitHub release runs `.github/workflows/release.yml`, which releases them in stages.
+
+## The stages
+
+```
+Verify ─▶ Test ─▶ Build and sign ─▶ Upload and validate ─▶ Publish to Maven Central
+                                            │                    (waits for approval)
+                                            └──────────────▶ Drop the deployment
+                                                   (if publish is rejected or fails, or on a dry run)
+```
+
+| Stage | What it does | Secrets |
+| --- | --- | --- |
+| Verify | Reads `sdkVersion`, checks a release's tag is `v<sdkVersion>`, and refuses a release while the repository is private | none |
+| Test | Unit tests, the release build and the sample app's lint | none |
+| Build and sign | Builds and signs the artifacts into `build/staging-repository` with Gradle, checks every file has a signature and checksums, and keeps the zipped bundle for 7 days | the signing key |
+| Upload and validate | Uploads the bundle to the Central Portal and waits until the Portal has validated it. The run summary shows the deployment id | the Portal token |
+| Publish to Maven Central | After approval in the `maven-central` environment, publishes the deployment and waits until it is on Maven Central | the Portal token |
+| Drop the deployment | Removes the deployment from the Portal | the Portal token |
+
+Gradle (with the [Gradle Maven Publish plugin](https://vanniktech.github.io/gradle-maven-publish-plugin/))
+builds and signs; `scripts/central-portal.sh` does the uploading, waiting, publishing and dropping
+through the Portal's publisher API. A failed stage can be re-run on its own from the run page:
+**Upload and validate** re-uploads the stored bundle without rebuilding it.
 
 ## Release
 
 1. Set `sdkVersion` in `gradle.properties` to the new version, move the `Unreleased` section of
    `CHANGELOG.md` under that version with today's date, and merge to `main`.
 2. Create a GitHub release from `main` with the tag `v<sdkVersion>`, such as `v0.1.0`, and the
-   changelog section as its notes. The workflow refuses a tag that does not match `sdkVersion`.
-3. The workflow uploads the artifacts to the Central Portal, which validates them: signatures,
-   POMs, sources and javadoc. Open [Deployments](https://central.sonatype.com/publishing/deployments),
-   check the deployment, and press **Publish**. It appears on Maven Central within about 30
-   minutes, and in search later.
+   changelog section as its notes.
+3. The run stops at **Publish to Maven Central** and waits for a reviewer. Open the run, check the
+   **Upload and validate** summary, and choose **Review deployments**:
+   - **Approve** to publish. The artifacts reach Maven Central within about 30 minutes, and search
+     later.
+   - **Reject** to stop. **Drop the deployment** then removes it from the Portal.
 
 Releases on Maven Central cannot be changed or deleted. A mistake needs a new version.
 
-The upload waits for **Publish** because `mavenCentralAutomaticPublishing=false` in
-`gradle.properties`. Once releases are routine, set it to `true` and the workflow publishes on its
-own.
+## Dry run
 
-### Trying the pipeline without releasing
-
-Run the **Release** workflow by hand from the Actions tab (it skips the tag check). Check the
-deployment validates in the Portal, then press **Drop** instead of **Publish**.
+Run the **Release** workflow by hand from the Actions tab with **dry run** ticked, which is the
+default. It goes through every stage up to validation on the Portal, then drops the deployment
+instead of publishing it. Nothing is released and nothing is left behind in the Portal.
 
 ## Check a publication locally
 
@@ -35,8 +55,13 @@ scripts/check-publication.sh
 ```
 
 This publishes to `~/.m2/repository` without signing and checks every file Maven Central needs is
-there. CI runs the same check on every pull request. To sign locally as well, set the
-`signingInMemoryKey*` properties below; publications are signed only when a key is set.
+there. CI runs the same check on every pull request. To check a signed publication as the release
+does, set the `signingInMemoryKey*` properties below, then:
+
+```sh
+./gradlew publishAllPublicationsToStagingRepository
+scripts/check-publication.sh --signed build/staging-repository
+```
 
 ## One-time setup
 
@@ -77,8 +102,8 @@ Before the key expires, extend it with `gpg --quick-set-expire` and send it to t
 
 ### 4. The GitHub secrets
 
-In the repository's **Settings → Environments**, create an environment called `release`. Add
-required reviewers to it if a release should need an approval. Add these secrets to it:
+In the repository's **Settings → Secrets and variables → Actions**, add these repository secrets.
+Each stage is given only the ones it needs:
 
 | Secret | Value |
 | --- | --- |
@@ -88,4 +113,11 @@ required reviewers to it if a release should need an approval. Add these secrets
 | `SIGNING_KEY_ID` | The key's short id |
 | `SIGNING_KEY_PASSWORD` | The key's passphrase |
 
-The workflow checks they are all set before it builds anything.
+**Build and sign** checks the signing secrets are set before it builds anything.
+
+### 5. The approval gate
+
+In **Settings → Environments**, create an environment called `maven-central` and add everyone who
+may approve a release as **required reviewers**. On GitHub's free plan, required reviewers only
+work in public repositories, which is one reason **Verify** refuses a release while the repository
+is private. Dry runs work either way.
