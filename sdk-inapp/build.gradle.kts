@@ -1,6 +1,8 @@
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.maven.publish)
+    alias(libs.plugins.dokka.javadoc)
     alias(libs.plugins.kotlin.compose)
 }
 
