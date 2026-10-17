@@ -99,8 +99,8 @@ public class BrudcastTraits(
  * @property logLevel The lowest level that is logged.
  * @property appearance Light, dark, or following the device, for in-app messages.
  * @property modules The feature modules to run, such as `InAppModule` and `PushModule`.
- * @property accentColor The default ARGB colour of primary buttons. The theme's primary colour is
- *   used when null.
+ * @property accentColor The default ARGB colour of buttons. When null, the theme's primary colour
+ *   is used, or its accent colour when the primary one would not stand out on the message.
  * @property presentationFilter Decides which activities may show in-app messages, such as to keep
  *   them off a login screen.
  */

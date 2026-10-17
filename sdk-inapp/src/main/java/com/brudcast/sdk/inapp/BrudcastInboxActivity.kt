@@ -4,6 +4,8 @@ import android.content.res.Configuration
 import android.os.Bundle
 import android.text.format.DateUtils
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
@@ -33,8 +35,6 @@ import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
@@ -64,16 +64,23 @@ public class BrudcastInboxActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         val title = intent.getStringExtra(EXTRA_TITLE) ?: "Inbox"
-        val isDark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+        val resolved = InAppModule.inbox.options?.let { InAppPresenter.theme(this, it) }
+        val isDark = resolved?.isDark ?: ((resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES)
+        val accent = if (intent.hasExtra(EXTRA_ACCENT)) Color(intent.getIntExtra(EXTRA_ACCENT, 0)) else resolved?.accent ?: DEFAULT_ACCENT
+        val theme = InAppTheme(accent, isDark)
+        val bars = if (isDark) SystemBarStyle.dark(android.graphics.Color.TRANSPARENT) else SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
+        enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
         setContent {
-            MaterialTheme(colorScheme = if (isDark) darkColorScheme() else lightColorScheme()) {
-                InboxScreen(title, InAppTheme(MaterialTheme.colorScheme.primary, isDark)) { finish() }
+            MaterialTheme(colorScheme = inAppColorScheme(theme)) {
+                InboxScreen(title, theme) { finish() }
             }
         }
     }
 
     internal companion object {
         const val EXTRA_TITLE = "com.brudcast.sdk.inapp.TITLE"
+        const val EXTRA_ACCENT = "com.brudcast.sdk.inapp.ACCENT"
+        val DEFAULT_ACCENT = Color(0xFF3D5AFE)
     }
 }
 
