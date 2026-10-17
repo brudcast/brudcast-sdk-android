@@ -44,8 +44,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -88,6 +86,9 @@ internal object InAppPresenter : Application.ActivityLifecycleCallbacks {
         var impressed = false
         var closing = false
     }
+
+    /** How far a dismissible modal's content starts from the top: the close button and its inset. */
+    private val CLOSE_BUTTON_CLEARANCE = 48.dp
 
     private var current: Presentation? = null
     private var resumed: WeakReference<Activity>? = null
@@ -161,17 +162,24 @@ internal object InAppPresenter : Application.ActivityLifecycleCallbacks {
         presentation.callbacks.onClosed()
     }
 
-    private fun theme(activity: Activity, options: BrudcastOptions): InAppTheme {
+    internal fun theme(activity: Activity, options: BrudcastOptions): InAppTheme {
         val isDark = when (options.appearance) {
             BrudcastAppearance.LIGHT -> false
             BrudcastAppearance.DARK -> true
             BrudcastAppearance.SYSTEM -> (activity.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
         }
-        val accent = options.accentColor ?: run {
-            val value = TypedValue()
-            if (activity.theme.resolveAttribute(android.R.attr.colorPrimary, value, true) && value.type >= TypedValue.TYPE_FIRST_COLOR_INT) value.data else null
+        val accent = options.accentColor?.let { Color(it) } ?: run {
+            val surface = inAppColorScheme(InAppTheme(Color.Black, isDark)).surface
+            val candidates = listOf(android.R.attr.colorPrimary, android.R.attr.colorAccent).mapNotNull { themeColor(activity, it) }
+            InAppHexColor.readableAccent(candidates, surface)
         }
-        return InAppTheme(accent?.let { Color(it) } ?: Color(0xFF3D5AFE), isDark)
+        return InAppTheme(accent ?: Color(0xFF3D5AFE), isDark)
+    }
+
+    private fun themeColor(activity: Activity, attribute: Int): Color? {
+        val value = TypedValue()
+        val resolved = activity.theme.resolveAttribute(attribute, value, true)
+        return if (resolved && value.type >= TypedValue.TYPE_FIRST_COLOR_INT && value.type <= TypedValue.TYPE_LAST_COLOR_INT) Color(value.data) else null
     }
 
     private fun reducedMotion(activity: Activity): Boolean =
@@ -179,8 +187,7 @@ internal object InAppPresenter : Application.ActivityLifecycleCallbacks {
 
     @Composable
     private fun Root(presentation: Presentation, theme: InAppTheme, reducedMotion: Boolean) {
-        val scheme = if (theme.isDark) darkColorScheme(primary = theme.accent) else lightColorScheme(primary = theme.accent)
-        MaterialTheme(colorScheme = scheme) {
+        MaterialTheme(colorScheme = inAppColorScheme(theme)) {
             val state = presentation.visible
             LaunchedEffect(state.isIdle, state.currentState) {
                 if (state.isIdle && state.currentState && !presentation.impressed) {
@@ -251,7 +258,11 @@ internal object InAppPresenter : Application.ActivityLifecycleCallbacks {
                     ) {
                         InAppBackground(layout, theme, MaterialTheme.colorScheme.surface) {
                             Box {
-                                Column(Modifier.verticalScroll(rememberScrollState()).padding(layout.padding.dp)) {
+                                val top = if (layout.dismissible) maxOf(layout.padding.dp, CLOSE_BUTTON_CLEARANCE) else layout.padding.dp
+                                Column(
+                                    Modifier.verticalScroll(rememberScrollState())
+                                        .padding(start = layout.padding.dp, end = layout.padding.dp, bottom = layout.padding.dp, top = top),
+                                ) {
                                     InAppBlockList(design.blocks, theme, onButton)
                                 }
                                 if (layout.dismissible) {

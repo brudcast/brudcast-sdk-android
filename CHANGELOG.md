@@ -21,6 +21,8 @@ the public API.
 - `sdk-bom` to keep the artifact versions aligned.
 - `BrudcastAction.verified`, false for a push tap the SDK cannot prove it created.
 - Apache License 2.0, a security policy and this changelog.
+- A sample app in the `sample` module that uses the SDK the way a customer's app would, from
+  sign-in through a shop to sign-out, built and linted in CI.
 - Publishing to Maven Central: signed artifacts with sources and API docs, a release workflow, and
   a CI check that every artifact is complete.
 

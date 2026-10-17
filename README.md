@@ -64,7 +64,7 @@ previous user.
 ## Events and screens
 
 ```kotlin
-Brudcast.track("checkout_started", mapOf("total" to 120, "plan" to "pro"))
+Brudcast.track("checkout_started", mapOf("total" to 120, "product" to "sneakers"))
 Brudcast.screen("Checkout")
 ```
 
@@ -156,6 +156,11 @@ environment accepts device tokens, the SDK logs a warning once and keeps the tok
 - Play data safety: the SDK collects a device id, the user id you pass, any email address, phone
   number and name you pass in `BrudcastTraits`, and app interactions with messages, for app
   functionality and analytics. Nothing is shared with third parties.
+
+## Sample app
+
+The `sample` module is a small Compose app that uses the SDK the way a customer's app would:
+sign-in, a shop with checkout, and an account screen. It builds against this checkout. See its [README](sample/README.md).
 
 ## Develop
 

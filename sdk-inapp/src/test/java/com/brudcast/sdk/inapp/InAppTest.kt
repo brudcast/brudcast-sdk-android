@@ -238,4 +238,28 @@ class InAppColorTest {
         assertNull(InAppHexColor.parse("112233"))
         assertNull(InAppHexColor.parse("#12"))
     }
+
+    @Test
+    fun skipsThemeColoursThatVanishOnTheSurface() {
+        val white = androidx.compose.ui.graphics.Color.White
+        val appBarGrey = androidx.compose.ui.graphics.Color(0xFFF5F5F5)
+        val teal = androidx.compose.ui.graphics.Color(0xFF009688)
+        assertEquals(teal, InAppHexColor.readableAccent(listOf(appBarGrey, teal), white))
+        assertEquals(teal, InAppHexColor.readableAccent(listOf(teal, appBarGrey), white))
+        assertNull(InAppHexColor.readableAccent(listOf(appBarGrey), white))
+        assertEquals(21.0, InAppHexColor.contrastRatio(androidx.compose.ui.graphics.Color.Black, white), 0.01)
+    }
+
+    @Test
+    fun drawsOnNeutralSurfacesWithTheAccent() {
+        val brand = androidx.compose.ui.graphics.Color(0xFF365AED)
+        val light = inAppColorScheme(InAppTheme(brand, isDark = false))
+        assertEquals(brand, light.primary)
+        assertEquals(androidx.compose.ui.graphics.Color.White, light.surface)
+        assertEquals(androidx.compose.ui.graphics.Color.White, light.background)
+        assertEquals(androidx.compose.ui.graphics.Color.White, light.onPrimary)
+        val dark = inAppColorScheme(InAppTheme(brand, isDark = true))
+        assertEquals(brand, dark.primary)
+        assertEquals(androidx.compose.ui.graphics.Color(0xFF121212), dark.surface)
+    }
 }

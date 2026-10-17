@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
+import androidx.compose.ui.graphics.toArgb
 import com.brudcast.sdk.BrudcastApiError
 import com.brudcast.sdk.BrudcastContext
 import com.brudcast.sdk.BrudcastDates
@@ -143,7 +144,9 @@ public class BrudcastInbox internal constructor() {
     }
 
     /**
-     * Opens the default inbox screen.
+     * Opens the default inbox screen, drawn in the accent colour in-app messages use. Opened from an
+     * activity, that activity's theme supplies the accent when [com.brudcast.sdk.BrudcastOptions.accentColor]
+     * is not set.
      *
      * @param context The context to start it from.
      * @param title The screen title.
@@ -151,6 +154,10 @@ public class BrudcastInbox internal constructor() {
     @JvmOverloads
     public fun present(context: Context, title: String = "Inbox") {
         val intent = Intent(context, BrudcastInboxActivity::class.java).putExtra(BrudcastInboxActivity.EXTRA_TITLE, title)
+        val options = this.context?.options
+        if (context is android.app.Activity && options != null) {
+            intent.putExtra(BrudcastInboxActivity.EXTRA_ACCENT, InAppPresenter.theme(context, options).accent.toArgb())
+        }
         if (context !is android.app.Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
     }
@@ -165,6 +172,9 @@ public class BrudcastInbox internal constructor() {
         entries.clear()
         publish(0)
     }
+
+    internal val options: com.brudcast.sdk.BrudcastOptions?
+        get() = context?.options
 
     internal fun entry(id: String): InAppMessage? = entries[id]
 
