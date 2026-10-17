@@ -23,6 +23,14 @@ subprojects {
         if (providers.gradleProperty("signingInMemoryKey").isPresent) {
             extensions.configure<MavenPublishBaseExtension> { signAllPublications() }
         }
+        extensions.configure<PublishingExtension> {
+            repositories {
+                maven {
+                    name = "staging"
+                    url = uri(rootProject.layout.buildDirectory.dir("staging-repository"))
+                }
+            }
+        }
     }
 
     plugins.withId("org.jetbrains.dokka-javadoc") {
