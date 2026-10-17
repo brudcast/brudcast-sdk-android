@@ -14,6 +14,9 @@ A push-only app depends on `sdk-push` (and `sdk-push-firebase`) and never ships 
 
 ## Install
 
+The artifacts are on Maven Central, so `mavenCentral()` in your repositories is all they need. The
+BOM keeps them on one version:
+
 ```kotlin
 dependencies {
     implementation(platform("com.brudcast:sdk-bom:0.1.0"))
@@ -159,6 +162,8 @@ environment accepts device tokens, the SDK logs a warning once and keeps the tok
 ```sh
 ./gradlew testDebugUnitTest assembleRelease
 ```
+
+[RELEASING.md](RELEASING.md) covers publishing to Maven Central.
 
 `BrudcastEnvironment.Local()` points the emulator at `brudcast-in-app-delivery-service` on the host
 (`10.0.2.2:8191`). Cleartext HTTP to it needs a debug network security config in the sample app.
