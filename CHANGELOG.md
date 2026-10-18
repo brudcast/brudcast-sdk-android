@@ -7,6 +7,27 @@ the public API.
 
 ## [Unreleased]
 
+### Added
+
+- Handlers that answer later, for bridges such as the Flutter plugin whose handlers reply
+  asynchronously: `Brudcast.setAsyncActionHandler`, `InAppModule.setAsyncMessageHandler` and
+  `PushModule.setAsyncNotificationHandler`. Each waits two seconds, then uses the default. The
+  synchronous setters now wrap them.
+- `Brudcast.performDefaultAction`, which runs an action's default behaviour without the handler.
+- `Brudcast.attachActivity`, for frameworks that call `initialize` after the first activity resumed,
+  so in-app messages and the launching push tap do not wait for the next resume.
+- `BrudcastInbox.render`, which draws an inbox entry for a custom inbox and reports the height its
+  design needs, as on iOS.
+- `BrudcastDecision`, the one-answer-with-timeout helper the asynchronous handlers use, for modules.
+- `BrudcastSdk.setWrapper`, which adds a wrapping SDK such as the Flutter plugin to the `User-Agent`.
+
+### Fixed
+
+- In-app messages show on activities that are not a `ComponentActivity`, such as Flutter's
+  `FlutterActivity`, instead of being skipped. The message brings its own lifecycle and handles the
+  back key itself.
+- An action handler that throws no longer crashes the app; the default behaviour runs.
+
 ## [0.1.0] - 2026-10-18
 
 ### Added
