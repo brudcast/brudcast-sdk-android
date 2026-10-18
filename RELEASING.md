@@ -10,7 +10,7 @@ a GitHub release runs `.github/workflows/release.yml`, which releases them in st
 Verify ─▶ Test ─▶ Build and sign ─▶ Upload and validate ─▶ Publish to Maven Central
                                             │                    (waits for approval)
                                             └──────────────▶ Drop the deployment
-                                                   (if publish is rejected or fails, or on a dry run)
+                                  (if validation fails, publish is rejected or fails, or on a dry run)
 ```
 
 | Stage | What it does | Secrets |
@@ -20,7 +20,7 @@ Verify ─▶ Test ─▶ Build and sign ─▶ Upload and validate ─▶ Publi
 | Build and sign | Builds and signs the artifacts into `build/staging-repository` with Gradle, checks every file has a signature and checksums, and keeps the zipped bundle for 7 days | the signing key |
 | Upload and validate | Uploads the bundle to the Central Portal and waits until the Portal has validated it. The run summary shows the deployment id | the Portal token |
 | Publish to Maven Central | After approval in the `maven-central` environment, publishes the deployment and waits until it is on Maven Central | the Portal token |
-| Drop the deployment | Removes the deployment from the Portal | the Portal token |
+| Drop the deployment | Removes the deployment from the Portal whenever one was uploaded and not published, including when the Portal fails to validate it | the Portal token |
 
 Gradle (with the [Gradle Maven Publish plugin](https://vanniktech.github.io/gradle-maven-publish-plugin/))
 builds and signs; `scripts/central-portal.sh` does the uploading, waiting, publishing and dropping
@@ -56,6 +56,11 @@ Releases on Maven Central cannot be changed or deleted. A mistake needs a new ve
 Run the **Release** workflow by hand from the Actions tab with **dry run** ticked, which is the
 default. It goes through every stage up to validation on the Portal, then drops the deployment
 instead of publishing it. Nothing is released and nothing is left behind in the Portal.
+
+The Portal refuses a version that is already on Maven Central, so a dry run of a released version
+fails **Upload and validate** with "Component ... already exists" for each artifact, and the
+deployment is dropped. Run a dry run after setting `sdkVersion` to the next version, on the release
+branch, to validate a release end to end.
 
 ## Check a publication locally
 

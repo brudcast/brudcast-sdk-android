@@ -216,7 +216,7 @@ jobs:
   drop:
     name: Drop the deployment
     needs: [upload, publish]
-    if: always() && needs.upload.result == 'success' && needs.publish.result != 'success'
+    if: always() && needs.upload.outputs.deployment_id != '' && needs.publish.result != 'success'
     runs-on: ubuntu-latest
     env:
       MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
