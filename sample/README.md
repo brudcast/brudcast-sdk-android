@@ -42,6 +42,9 @@ The backend needs two endpoints, both taking and returning JSON:
 
 On an error, the app shows the response's `message`.
 
+[brudcast-sample-backend](https://github.com/brudcast/brudcast-sample-backend) implements both in a
+few short TypeScript files; run it locally to try the flow.
+
 ## The app
 
 ```
