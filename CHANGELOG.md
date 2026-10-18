@@ -7,6 +7,8 @@ the public API.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-18
+
 ### Added
 
 - Handlers that answer later, for bridges such as the Flutter plugin whose handlers reply
