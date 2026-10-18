@@ -19,7 +19,7 @@ BOM keeps them on one version:
 
 ```kotlin
 dependencies {
-    implementation(platform("com.brudcast:sdk-bom:0.1.0"))
+    implementation(platform("com.brudcast:sdk-bom:0.2.0"))
     implementation("com.brudcast:sdk-inapp")
     implementation("com.brudcast:sdk-push")
     implementation("com.brudcast:sdk-push-firebase")
@@ -43,8 +43,8 @@ class App : Application() {
 ```
 
 The publishable key is public by design. Never put the application's identity secret in the app.
-In-app messages show over activities that extend `ComponentActivity` (every `AppCompatActivity` and
-Compose activity does).
+In-app messages show over any activity, including ones that are not a `ComponentActivity`, such as
+Flutter's `FlutterActivity`.
 
 ## Identify the user
 
