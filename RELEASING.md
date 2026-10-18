@@ -118,6 +118,8 @@ Each stage is given only the ones it needs:
 ### 5. The approval gate
 
 In **Settings → Environments**, create an environment called `maven-central` and add everyone who
-may approve a release as **required reviewers**. On GitHub's free plan, required reviewers only
+may approve a release as **required reviewers**. Under **Deployment branches and tags**, allow only
+tags matching `v*`, so **Publish to Maven Central** can run only from a release tag and never from a
+branch, even in a run started by hand with dry run unticked. On GitHub's free plan, required reviewers only
 work in public repositories, which is one reason **Verify** refuses a release while the repository
 is private. Dry runs work either way.

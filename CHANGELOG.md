@@ -7,6 +7,8 @@ the public API.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-18
+
 ### Added
 
 - `sdk-core`: configuration, a no-backup device id, sessions, `identify` and `reset` with
@@ -68,3 +70,6 @@ the public API.
   `Application`.
 - The event queue is written to disk at most once a second, and when the app goes to the
   background, instead of on every event.
+
+[Unreleased]: https://github.com/brudcast/brudcast-sdk-android/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/brudcast/brudcast-sdk-android/releases/tag/v0.1.0
