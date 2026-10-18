@@ -15,7 +15,7 @@ Verify ─▶ Test ─▶ Build and sign ─▶ Upload and validate ─▶ Publi
 
 | Stage | What it does | Secrets |
 | --- | --- | --- |
-| Verify | Reads `sdkVersion`, checks a release's tag is `v<sdkVersion>`, and refuses a release while the repository is private | none |
+| Verify | Reads `sdkVersion`, checks a release's tag is `v<sdkVersion>` and that `CHANGELOG.md` and the README name the same version, and refuses a release while the repository is private | none |
 | Test | Unit tests, the release build and the sample app's lint | none |
 | Build and sign | Builds and signs the artifacts into `build/staging-repository` with Gradle, checks every file has a signature and checksums, and keeps the zipped bundle for 7 days | the signing key |
 | Upload and validate | Uploads the bundle to the Central Portal and waits until the Portal has validated it. The run summary shows the deployment id | the Portal token |
@@ -29,8 +29,11 @@ through the Portal's publisher API. A failed stage can be re-run on its own from
 
 ## Release
 
-1. Set `sdkVersion` in `gradle.properties` to the new version, move the `Unreleased` section of
-   `CHANGELOG.md` under that version with today's date, and merge to `main`.
+1. On a `docs/release-<version>` branch, set `sdkVersion` in `gradle.properties` to the new
+   version, move the `Unreleased` section of `CHANGELOG.md` under that version with today's date,
+   and set the BOM version in the README's install section to it. Commit as
+   `docs: release <version>` and merge to `main`. CI runs `scripts/check-version.sh`, which fails
+   until all three name the same version.
 2. Create a GitHub release from `main` with the tag `v<sdkVersion>`, such as `v0.1.0`, and the
    changelog section as its notes.
 3. The run stops at **Publish to Maven Central** and waits for a reviewer. Open the run, check the
@@ -40,6 +43,13 @@ through the Portal's publisher API. A failed stage can be re-run on its own from
    - **Reject** to stop. **Drop the deployment** then removes it from the Portal.
 
 Releases on Maven Central cannot be changed or deleted. A mistake needs a new version.
+
+## Conventions
+
+- Commits follow [Conventional Commits](https://www.conventionalcommits.org). A change that breaks
+  the public API gets a `!` after its type, such as `fix!:`, before 1.0 too.
+- `CHANGELOG.md` lists what an app using the SDK gets. How the SDK is built, tested and released
+  belongs in the pull request and in this file, not in the changelog.
 
 ## Dry run
 
