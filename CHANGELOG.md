@@ -25,9 +25,7 @@ the public API.
 - Apache License 2.0, a security policy and this changelog.
 - A sample app in the `sample` module that uses the SDK the way a customer's app would, from
   sign-in through a shop to sign-out, built and linted in CI.
-- Publishing to Maven Central: signed artifacts with sources and API docs, a staged release workflow
-  (verify, test, build and sign, upload and validate, then publish after approval or drop), dry
-  runs, and a CI check that every artifact is complete.
+- Published to Maven Central under `com.brudcast`, signed and with sources and API docs.
 
 ### Changed
 

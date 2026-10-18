@@ -18,6 +18,9 @@ jobs:
       - name: Check out the code
         uses: actions/checkout@v4
 
+      - name: Check the changelog and README name sdkVersion
+        run: scripts/check-version.sh
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:

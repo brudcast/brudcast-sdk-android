@@ -44,6 +44,9 @@ jobs:
             exit 1
           fi
 
+      - name: Check the changelog and README name the same version
+        run: scripts/check-version.sh
+
       - name: Decide between a release and a dry run
         id: mode
         env:
