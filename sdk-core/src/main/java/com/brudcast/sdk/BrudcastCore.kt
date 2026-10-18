@@ -55,7 +55,7 @@ internal class BrudcastCore(
         private set
 
     @Volatile
-    var actionHandler: BrudcastActionHandler? = null
+    var actionHandler: BrudcastAsyncActionHandler? = null
 
     private val events = EventQueue(storage)
     private var identity: BrudcastIdentity? = loadIdentity()
@@ -485,8 +485,33 @@ internal class BrudcastCore(
 
     fun perform(action: BrudcastAction) {
         main.post {
-            if (actionHandler?.handle(action) == BrudcastActionResult.HANDLED) return@post
+            val handler = actionHandler ?: return@post DefaultActionPerformer.perform(application, activities.current, action)
+            val decision = BrudcastDecision(
+                fallback = BrudcastActionResult.USE_DEFAULT,
+                timeoutMessage = "The action handler did not answer in time; the default behaviour runs",
+            ) { result ->
+                if (result == BrudcastActionResult.USE_DEFAULT) performDefault(action)
+            }
+            try {
+                handler.handle(action, decision::decide)
+            } catch (error: RuntimeException) {
+                decision.fail(error, "action handler")
+            }
+        }
+    }
+
+    fun performDefault(action: BrudcastAction) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
             DefaultActionPerformer.perform(application, activities.current, action)
+        } else {
+            main.post { DefaultActionPerformer.perform(application, activities.current, action) }
+        }
+    }
+
+    fun attachActivity(activity: android.app.Activity) {
+        main.post {
+            if (activity.isFinishing || activity.isDestroyed || activities.current === activity) return@post
+            activities.onActivityResumed(activity)
         }
     }
 
