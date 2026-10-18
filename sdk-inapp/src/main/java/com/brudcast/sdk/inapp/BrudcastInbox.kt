@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Handler
 import android.os.Looper
+import android.view.View
 import androidx.compose.ui.graphics.toArgb
 import com.brudcast.sdk.BrudcastApiError
 import com.brudcast.sdk.BrudcastContext
@@ -160,6 +161,26 @@ public class BrudcastInbox internal constructor() {
         }
         if (context !is android.app.Activity) intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         context.startActivity(intent)
+    }
+
+    /**
+     * Draws an inbox entry's design with the standard renderer, for a custom inbox. Buttons in it
+     * run their actions as in the default inbox. The view is not marked read; call [markRead].
+     *
+     * @param context The context the view lives in, normally an activity. Its theme supplies the
+     *   accent when [com.brudcast.sdk.BrudcastOptions.accentColor] is not set.
+     * @param message An entry from [list].
+     * @param onContentHeightChanged Called on the main thread with the height in pixels the design
+     *   needs at the view's width, whenever it changes, so the view can be sized to fit. The view
+     *   scrolls when it is given less.
+     * @return The view, or null when the entry was not listed or its design cannot be drawn.
+     */
+    @JvmOverloads
+    public fun render(context: Context, message: BrudcastInAppMessage, onContentHeightChanged: ((Int) -> Unit)? = null): View? {
+        val design = entries[message.id]?.design ?: return null
+        val options = this.context?.options ?: return null
+        val theme = InAppPresenter.theme(context, options)
+        return InboxMessageView(context, design, theme, { buttonId, action -> buttonTapped(message.id, buttonId, action) }, onContentHeightChanged)
     }
 
     internal fun refreshUnreadCount() {

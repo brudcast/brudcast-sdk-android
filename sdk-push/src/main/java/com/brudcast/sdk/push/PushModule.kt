@@ -20,6 +20,7 @@ import androidx.core.content.ContextCompat
 import com.brudcast.sdk.Brudcast
 import com.brudcast.sdk.BrudcastAction
 import com.brudcast.sdk.BrudcastContext
+import com.brudcast.sdk.BrudcastDecision
 import com.brudcast.sdk.BrudcastEvent
 import com.brudcast.sdk.BrudcastHttpMethod
 import com.brudcast.sdk.BrudcastLogLevel
@@ -61,6 +62,15 @@ public fun interface BrudcastNotificationHandler {
     public fun handle(notification: BrudcastPushNotification): BrudcastNotificationDecision
 }
 
+/**
+ * Decides whether a notification the SDK is about to post shows, answering later, for handlers that
+ * cannot answer on the spot, such as one in Dart or JavaScript. Called on the main thread. Call
+ * `decide` once, from any thread, within two seconds; after that the notification shows.
+ */
+public fun interface BrudcastAsyncNotificationHandler {
+    public fun handle(notification: BrudcastPushNotification, decide: (BrudcastNotificationDecision) -> Unit)
+}
+
 /** Push notifications. Add [PushModule] to `BrudcastOptions.modules` to run it. */
 public val Brudcast.push: PushModule
     get() = PushModule
@@ -79,7 +89,7 @@ public object PushModule : BrudcastModule, BrudcastPushPermissionRequesting {
     internal const val EXTRA_TOKEN = "com.brudcast.sdk.push.TOKEN"
     private const val INTENT_TOKEN_KEY = "brudcast.push.intent_token"
     private const val FCM_ICON_METADATA = "com.google.firebase.messaging.default_notification_icon"
-    private const val HANDLER_TIMEOUT_MS = 2_000L
+    private const val MAIN_THREAD_GRACE_MS = 250L
     private const val IMAGE_CONNECT_TIMEOUT_MS = 3_000
     private const val IMAGE_READ_TIMEOUT_MS = 4_000
     private const val MAX_IMAGE_BYTES = 5 * 1_024 * 1_024
@@ -104,7 +114,7 @@ public object PushModule : BrudcastModule, BrudcastPushPermissionRequesting {
     private var asked = false
 
     @Volatile
-    private var notificationHandler: BrudcastNotificationHandler? = null
+    private var notificationHandler: BrudcastAsyncNotificationHandler? = null
 
     @Volatile
     private var intentToken: String? = null
@@ -223,6 +233,17 @@ public object PushModule : BrudcastModule, BrudcastPushPermissionRequesting {
      * @param handler The handler, or null to show every notification.
      */
     public fun setNotificationHandler(handler: BrudcastNotificationHandler?) {
+        setAsyncNotificationHandler(handler?.let { sync -> BrudcastAsyncNotificationHandler { notification, decide -> decide(sync.handle(notification)) } })
+    }
+
+    /**
+     * Sets a handler that answers later, for bridges whose handler replies asynchronously. Call
+     * `decide` once within two seconds; after that the notification shows. Replaces any handler set
+     * with [setNotificationHandler].
+     *
+     * @param handler The handler, or null to show every notification.
+     */
+    public fun setAsyncNotificationHandler(handler: BrudcastAsyncNotificationHandler?) {
         notificationHandler = handler
     }
 
@@ -252,8 +273,8 @@ public object PushModule : BrudcastModule, BrudcastPushPermissionRequesting {
         }
         val application = context.applicationContext
         if (Looper.myLooper() == Looper.getMainLooper()) {
-            if (decide(notification) == BrudcastNotificationDecision.SHOW) {
-                Thread { showSafely(application, notification) }.start()
+            decide(notification) { decision ->
+                if (decision == BrudcastNotificationDecision.SHOW) Thread { showSafely(application, notification) }.start()
             }
             return true
         }
@@ -263,15 +284,30 @@ public object PushModule : BrudcastModule, BrudcastPushPermissionRequesting {
         return true
     }
 
-    private fun decide(notification: BrudcastPushNotification): BrudcastNotificationDecision = try {
-        notificationHandler?.handle(notification) ?: BrudcastNotificationDecision.SHOW
-    } catch (error: RuntimeException) {
-        BrudcastLogger.error("The notification handler threw: ${error.message}")
-        BrudcastNotificationDecision.SHOW
+    /**
+     * Asks the notification handler. Must be called on the main thread.
+     *
+     * @param notification The notification.
+     * @param completion Called once with the handler's decision, or [BrudcastNotificationDecision.SHOW]
+     *   when there is no handler, it threw, or it did not answer in time.
+     */
+    private fun decide(notification: BrudcastPushNotification, completion: (BrudcastNotificationDecision) -> Unit) {
+        val handler = notificationHandler ?: return completion(BrudcastNotificationDecision.SHOW)
+        val decision = BrudcastDecision(
+            fallback = BrudcastNotificationDecision.SHOW,
+            timeoutMessage = "The notification handler did not answer in time; the notification shows",
+            onDecided = completion,
+        )
+        try {
+            handler.handle(notification, decision::decide)
+        } catch (error: RuntimeException) {
+            decision.fail(error, "notification handler")
+        }
     }
 
     /**
-     * Asks the notification handler on the main thread, waiting for it a bounded time.
+     * Asks the notification handler on the main thread from another thread, waiting for it a bounded
+     * time.
      *
      * @param notification The notification.
      * @return The handler's decision, or [BrudcastNotificationDecision.SHOW] when there is no
@@ -282,11 +318,13 @@ public object PushModule : BrudcastModule, BrudcastPushPermissionRequesting {
         val decision = AtomicReference(BrudcastNotificationDecision.SHOW)
         val answered = CountDownLatch(1)
         main.post {
-            decision.set(decide(notification))
-            answered.countDown()
+            decide(notification) {
+                decision.set(it)
+                answered.countDown()
+            }
         }
-        if (!answered.await(HANDLER_TIMEOUT_MS, TimeUnit.MILLISECONDS)) {
-            BrudcastLogger.warning("The notification handler did not answer in time; the notification shows")
+        if (!answered.await(BrudcastDecision.HANDLER_TIMEOUT_MS + MAIN_THREAD_GRACE_MS, TimeUnit.MILLISECONDS)) {
+            BrudcastLogger.warning("The main thread was too busy to ask the notification handler; the notification shows")
         }
         return decision.get()
     }

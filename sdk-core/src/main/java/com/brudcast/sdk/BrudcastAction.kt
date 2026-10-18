@@ -51,6 +51,15 @@ public fun interface BrudcastActionHandler {
     public fun handle(action: BrudcastAction): BrudcastActionResult
 }
 
+/**
+ * Decides what to do with an action, answering later, for handlers that cannot answer on the spot,
+ * such as one in Dart or JavaScript. Called on the main thread. Call `decide` once, from any
+ * thread, within two seconds; after that the default behaviour runs.
+ */
+public fun interface BrudcastAsyncActionHandler {
+    public fun handle(action: BrudcastAction, decide: (BrudcastActionResult) -> Unit)
+}
+
 internal object DefaultActionPerformer {
     fun perform(context: Context, activity: Activity?, action: BrudcastAction) {
         if (action.kind == BrudcastAction.Kind.CUSTOM_EVENT) return

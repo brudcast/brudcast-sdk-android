@@ -5,6 +5,7 @@ import android.os.Looper
 import com.brudcast.sdk.Brudcast
 import com.brudcast.sdk.BrudcastAction
 import com.brudcast.sdk.BrudcastContext
+import com.brudcast.sdk.BrudcastDecision
 import com.brudcast.sdk.BrudcastEvent
 import com.brudcast.sdk.BrudcastHttpMethod
 import com.brudcast.sdk.BrudcastLogger
@@ -37,6 +38,15 @@ public enum class BrudcastMessageDecision {
 /** Decides what happens to a message about to show. Called on the main thread. */
 public fun interface BrudcastMessageHandler {
     public fun handle(message: BrudcastInAppMessage): BrudcastMessageDecision
+}
+
+/**
+ * Decides what happens to a message about to show, answering later, for handlers that cannot answer
+ * on the spot, such as one in Dart or JavaScript. Called on the main thread. Call `decide` once,
+ * from any thread, within two seconds; after that the message shows.
+ */
+public fun interface BrudcastAsyncMessageHandler {
+    public fun handle(message: BrudcastInAppMessage, decide: (BrudcastMessageDecision) -> Unit)
 }
 
 /** Why a message closed without an action. */
@@ -80,7 +90,7 @@ public object InAppModule : BrudcastModule {
     private var syncScheduled = false
 
     @Volatile
-    private var messageHandler: BrudcastMessageHandler? = null
+    private var messageHandler: BrudcastAsyncMessageHandler? = null
 
     override fun attach(context: BrudcastContext) {
         this.context = context
@@ -159,6 +169,17 @@ public object InAppModule : BrudcastModule {
      * @param handler The handler, or null to show every message.
      */
     public fun setMessageHandler(handler: BrudcastMessageHandler?) {
+        setAsyncMessageHandler(handler?.let { sync -> BrudcastAsyncMessageHandler { message, decide -> decide(sync.handle(message)) } })
+    }
+
+    /**
+     * Sets a handler that answers later, for bridges whose handler replies asynchronously. Call
+     * `decide` once within two seconds; after that the message shows. Replaces any handler set with
+     * [setMessageHandler].
+     *
+     * @param handler The handler, or null to show every message.
+     */
+    public fun setAsyncMessageHandler(handler: BrudcastAsyncMessageHandler?) {
         messageHandler = handler
     }
 
@@ -319,20 +340,25 @@ public object InAppModule : BrudcastModule {
         presentingId = message.id
         val publicMessage = message.toPublic()
         main.post {
-            val decision = try {
-                messageHandler?.handle(publicMessage) ?: BrudcastMessageDecision.SHOW
+            val handler = messageHandler ?: return@post post { decided(message, design, BrudcastMessageDecision.SHOW) }
+            val decision = BrudcastDecision(
+                fallback = BrudcastMessageDecision.SHOW,
+                timeoutMessage = "The message handler did not answer in time; message ${message.id} shows",
+            ) { decision -> post { decided(message, design, decision) } }
+            try {
+                handler.handle(publicMessage, decision::decide)
             } catch (error: RuntimeException) {
-                BrudcastLogger.error("The message handler threw: ${error.message}")
-                BrudcastMessageDecision.SHOW
+                decision.fail(error, "message handler")
             }
-            post {
-                when (decision) {
-                    BrudcastMessageDecision.SHOW -> render(message, design)
-                    else -> {
-                        BrudcastLogger.debug("The host chose ${decision.name.lowercase()} for message ${message.id}")
-                        finishPresenting()
-                    }
-                }
+        }
+    }
+
+    private fun decided(message: InAppMessage, design: InAppDesign, decision: BrudcastMessageDecision) {
+        when (decision) {
+            BrudcastMessageDecision.SHOW -> render(message, design)
+            else -> {
+                BrudcastLogger.debug("The host chose ${decision.name.lowercase()} for message ${message.id}")
+                finishPresenting()
             }
         }
     }
@@ -346,7 +372,7 @@ public object InAppModule : BrudcastModule {
                     return@post finishPresenting()
                 }
                 main.post {
-                    val shown = InAppPresenter.present(message.id, design, context.options, callbacks(message))
+                    val shown = InAppPresenter.present(context.currentActivity, message.id, design, context.options, callbacks(message))
                     if (!shown) post { finishPresenting() }
                 }
             }

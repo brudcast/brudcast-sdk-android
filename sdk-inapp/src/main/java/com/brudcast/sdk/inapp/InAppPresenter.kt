@@ -2,11 +2,14 @@ package com.brudcast.sdk.inapp
 
 import android.app.Activity
 import android.app.Application
+import android.content.Context
 import android.content.res.Configuration
 import android.os.Bundle
 import android.provider.Settings
 import android.util.TypedValue
 import android.view.Gravity
+import android.view.KeyEvent
+import android.view.View
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
@@ -81,7 +84,9 @@ internal object InAppPresenter : Application.ActivityLifecycleCallbacks {
         val callbacks: InAppPresentationCallbacks,
     ) {
         var activity: WeakReference<Activity>? = null
-        var view: ComposeView? = null
+        var view: View? = null
+        var owners: PresentationOwners? = null
+        var previousFocus: WeakReference<View>? = null
         val visible = MutableTransitionState(false)
         var impressed = false
         var closing = false
@@ -91,7 +96,6 @@ internal object InAppPresenter : Application.ActivityLifecycleCallbacks {
     private val CLOSE_BUTTON_CLEARANCE = 48.dp
 
     private var current: Presentation? = null
-    private var resumed: WeakReference<Activity>? = null
     private var installed = false
 
     fun install(application: Application) {
@@ -103,11 +107,11 @@ internal object InAppPresenter : Application.ActivityLifecycleCallbacks {
     /**
      * Shows a message. Must be called on the main thread.
      *
+     * @param activity The resumed activity, or null when none is.
      * @return False when nothing could be shown, such as with no suitable activity.
      */
-    fun present(messageId: String, design: InAppDesign, options: BrudcastOptions, callbacks: InAppPresentationCallbacks): Boolean {
-        if (current != null) return false
-        val activity = resumed?.get() ?: return false
+    fun present(activity: Activity?, messageId: String, design: InAppDesign, options: BrudcastOptions, callbacks: InAppPresentationCallbacks): Boolean {
+        if (current != null || activity == null) return false
         if (activity.isFinishing || options.presentationFilter?.invoke(activity) == false) return false
         val presentation = Presentation(messageId, design, options, callbacks)
         if (!attach(presentation, activity, animate = true)) return false
@@ -118,18 +122,13 @@ internal object InAppPresenter : Application.ActivityLifecycleCallbacks {
 
     private fun attach(presentation: Presentation, activity: Activity, animate: Boolean): Boolean {
         val decor = activity.window?.decorView as? FrameLayout ?: return false
-        if (decor.findViewTreeLifecycleOwner() == null) {
-            BrudcastLogger.logOnce("no-lifecycle-${activity.javaClass.name}", com.brudcast.sdk.BrudcastLogLevel.WARNING) {
-                "${activity.javaClass.simpleName} is not a ComponentActivity, so in-app messages cannot show on it"
-            }
-            return false
-        }
         if (!animate) presentation.visible.targetState = true
         val theme = theme(activity, presentation.options)
-        val view = ComposeView(activity).apply {
+        val content = ComposeView(activity).apply {
             setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
             setContent { Root(presentation, theme, reducedMotion(activity)) }
         }
+        val view = if (decor.findViewTreeLifecycleOwner() != null) content else ownedContainer(presentation, activity, content)
         val params = if (presentation.design.format == InAppFormat.BANNER) {
             FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT,
                 if (presentation.design.layout.position == InAppPosition.BOTTOM) Gravity.BOTTOM else Gravity.TOP)
@@ -143,9 +142,37 @@ internal object InAppPresenter : Application.ActivityLifecycleCallbacks {
         return true
     }
 
+    /**
+     * Wraps a message in owners of its own, for an activity that provides none, such as Flutter's
+     * `FlutterActivity`. A modal or full screen message takes focus, so the back key reaches it.
+     *
+     * @param presentation The presentation.
+     * @param activity The activity.
+     * @param content The message's Compose view.
+     * @return The view to add to the activity.
+     */
+    private fun ownedContainer(presentation: Presentation, activity: Activity, content: ComposeView): View {
+        val owners = PresentationOwners(activity)
+        val container = OwnedContainer(activity, owners)
+        container.addView(content, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+        owners.install(container, content)
+        presentation.owners = owners
+        if (presentation.design.format != InAppFormat.BANNER) {
+            presentation.previousFocus = activity.currentFocus?.let { WeakReference(it) }
+            container.isFocusable = true
+            container.isFocusableInTouchMode = true
+            container.post { container.requestFocus() }
+        }
+        return container
+    }
+
     private fun detach(presentation: Presentation) {
         val view = presentation.view ?: return
         (view.parent as? ViewGroup)?.removeView(view)
+        presentation.owners?.destroy()
+        presentation.owners = null
+        presentation.previousFocus?.get()?.requestFocus()
+        presentation.previousFocus = null
         presentation.view = null
         presentation.activity = null
     }
@@ -162,23 +189,23 @@ internal object InAppPresenter : Application.ActivityLifecycleCallbacks {
         presentation.callbacks.onClosed()
     }
 
-    internal fun theme(activity: Activity, options: BrudcastOptions): InAppTheme {
+    internal fun theme(context: Context, options: BrudcastOptions): InAppTheme {
         val isDark = when (options.appearance) {
             BrudcastAppearance.LIGHT -> false
             BrudcastAppearance.DARK -> true
-            BrudcastAppearance.SYSTEM -> (activity.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+            BrudcastAppearance.SYSTEM -> (context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
         }
         val accent = options.accentColor?.let { Color(it) } ?: run {
             val surface = inAppColorScheme(InAppTheme(Color.Black, isDark)).surface
-            val candidates = listOf(android.R.attr.colorPrimary, android.R.attr.colorAccent).mapNotNull { themeColor(activity, it) }
+            val candidates = listOf(android.R.attr.colorPrimary, android.R.attr.colorAccent).mapNotNull { themeColor(context, it) }
             InAppHexColor.readableAccent(candidates, surface)
         }
         return InAppTheme(accent ?: Color(0xFF3D5AFE), isDark)
     }
 
-    private fun themeColor(activity: Activity, attribute: Int): Color? {
+    private fun themeColor(context: Context, attribute: Int): Color? {
         val value = TypedValue()
-        val resolved = activity.theme.resolveAttribute(attribute, value, true)
+        val resolved = context.theme.resolveAttribute(attribute, value, true)
         return if (resolved && value.type >= TypedValue.TYPE_FIRST_COLOR_INT && value.type <= TypedValue.TYPE_LAST_COLOR_INT) Color(value.data) else null
     }
 
@@ -389,16 +416,13 @@ internal object InAppPresenter : Application.ActivityLifecycleCallbacks {
     }
 
     override fun onActivityResumed(activity: Activity) {
-        resumed = WeakReference(activity)
         val presentation = current ?: return
         if (presentation.view == null && !presentation.closing) {
             if (!attach(presentation, activity, animate = false)) finished(presentation)
         }
     }
 
-    override fun onActivityPaused(activity: Activity) {
-        if (resumed?.get() === activity) resumed = null
-    }
+    override fun onActivityPaused(activity: Activity) {}
 
     override fun onActivityDestroyed(activity: Activity) {
         val presentation = current ?: return
@@ -415,6 +439,17 @@ internal object InAppPresenter : Application.ActivityLifecycleCallbacks {
     override fun onActivityStarted(activity: Activity) {}
     override fun onActivityStopped(activity: Activity) {}
     override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
+}
+
+/** Holds a message with owners of its own, and passes the back key to the message's handlers. */
+private class OwnedContainer(context: Context, private val owners: PresentationOwners) : FrameLayout(context) {
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+            if (event.action == KeyEvent.ACTION_UP && owners.handleBack()) return true
+            if (event.action == KeyEvent.ACTION_DOWN) return true
+        }
+        return super.dispatchKeyEvent(event)
+    }
 }
 
 internal fun splitTrailingButtons(blocks: List<InAppBlock>): Pair<List<InAppBlock>, List<InAppBlock>> {

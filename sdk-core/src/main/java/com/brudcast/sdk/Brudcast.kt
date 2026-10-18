@@ -12,7 +12,7 @@ public object Brudcast {
     private val lock = Any()
     private var core: BrudcastCore? = null
     private val pending = ArrayList<(BrudcastCore) -> Unit>()
-    private var pendingActionHandler: BrudcastActionHandler? = null
+    private var pendingActionHandler: BrudcastAsyncActionHandler? = null
 
     /**
      * Starts the SDK.
@@ -150,10 +150,45 @@ public object Brudcast {
      */
     @JvmStatic
     public fun setActionHandler(handler: BrudcastActionHandler?) {
+        setAsyncActionHandler(handler?.let { sync -> BrudcastAsyncActionHandler { action, decide -> decide(sync.handle(action)) } })
+    }
+
+    /**
+     * Sets a handler that answers later, for bridges whose handler replies asynchronously. Call
+     * `decide` once within two seconds; after that the default behaviour runs. Replaces any handler
+     * set with [setActionHandler].
+     *
+     * @param handler The handler, or null to restore the defaults.
+     */
+    @JvmStatic
+    public fun setAsyncActionHandler(handler: BrudcastAsyncActionHandler?) {
         synchronized(lock) {
             val current = core
             if (current != null) current.actionHandler = handler else pendingActionHandler = handler
         }
+    }
+
+    /**
+     * Runs the default behaviour for an action, skipping the action handler: opens the link, or does
+     * nothing for a custom event. For bridges that held an action and later chose the default.
+     *
+     * @param action The action.
+     */
+    @JvmStatic
+    public fun performDefaultAction(action: BrudcastAction) {
+        dispatch { it.performDefault(action) }
+    }
+
+    /**
+     * Tells the SDK about an activity that resumed before [initialize] ran, for frameworks such as
+     * Flutter and React Native that start the SDK from their own code after the first activity is
+     * already on screen. Without it, in-app messages and push taps wait for the next resume.
+     *
+     * @param activity The resumed activity.
+     */
+    @JvmStatic
+    public fun attachActivity(activity: android.app.Activity) {
+        dispatch { it.attachActivity(activity) }
     }
 
     /**
