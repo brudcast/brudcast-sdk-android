@@ -1,5 +1,7 @@
 # Brudcast Android SDK
 
+![Brudcast: Reach Everyone, Every time](.github/assets/banner.svg)
+
 In-app messaging and push notifications for Android apps on Brudcast. Android 6.0 (API 23) and later.
 
 | Artifact                            | What it does                                                                                                                  |
