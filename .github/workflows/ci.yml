@@ -16,19 +16,19 @@ jobs:
 
     steps:
       - name: Check out the code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Check the changelog and README name sdkVersion
         run: scripts/check-version.sh
 
       - name: Set up JDK 17
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v5
 
       - name: Run the unit tests and the release build, sample app included
         run: ./gradlew testDebugUnitTest assembleRelease :sample:lintDebug
